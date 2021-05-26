@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"strings"
+	"sync"
 
 	"github.com/go-logr/logr"
 	"golang.org/x/sync/errgroup"
@@ -28,6 +29,7 @@ import (
 	"k8s.io/kubectl/pkg/cmd/replace"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 	"k8s.io/kubectl/pkg/scheme"
+	"k8s.io/kubectl/pkg/util/openapi"
 
 	"github.com/argoproj/gitops-engine/pkg/diff"
 	"github.com/argoproj/gitops-engine/pkg/utils/io"
@@ -39,7 +41,7 @@ type CleanupFunc func()
 type OnKubectlRunFunc func(command string) (CleanupFunc, error)
 
 type Kubectl interface {
-	ApplyResource(ctx context.Context, config *rest.Config, obj *unstructured.Unstructured, namespace string, dryRunStrategy cmdutil.DryRunStrategy, force, validate bool) (string, error)
+	ApplyResource(ctx context.Context, config *rest.Config, obj *unstructured.Unstructured, namespace string, dryRunStrategy cmdutil.DryRunStrategy, force, validate bool, opts ...CmdOpts) (string, error)
 	ReplaceResource(ctx context.Context, config *rest.Config, obj *unstructured.Unstructured, namespace string, dryRunStrategy cmdutil.DryRunStrategy, force bool) (string, error)
 	CreateResource(ctx context.Context, config *rest.Config, obj *unstructured.Unstructured, namespace string, dryRunStrategy cmdutil.DryRunStrategy) (*unstructured.Unstructured, error)
 	UpdateResource(ctx context.Context, config *rest.Config, obj *unstructured.Unstructured, namespace string, dryRunStrategy cmdutil.DryRunStrategy) (*unstructured.Unstructured, error)
@@ -398,8 +400,30 @@ func (k *KubectlCmd) UpdateResource(ctx context.Context, config *rest.Config, ob
 	return resourceIf.Update(ctx, obj, updateOptions)
 }
 
+// CmdContext allows caching expensive resources across multple apply operations
+type CmdContext struct {
+	schemaInit         sync.Once
+	openAPISchema      openapi.Resources
+	openAPISchemaError error
+}
+
+func (a *CmdContext) GetOpenAPISchema(f cmdutil.Factory) (openapi.Resources, error) {
+	a.schemaInit.Do(func() {
+		a.openAPISchema, a.openAPISchemaError = f.OpenAPISchema()
+	})
+	return a.openAPISchema, a.openAPISchemaError
+}
+
+type CmdOpts func(cmdCtx **CmdContext)
+
+func WithCmdContext(ctx *CmdContext) CmdOpts {
+	return func(cmdCtx **CmdContext) {
+		*cmdCtx = ctx
+	}
+}
+
 // ApplyResource performs an apply of a unstructured resource
-func (k *KubectlCmd) ApplyResource(ctx context.Context, config *rest.Config, obj *unstructured.Unstructured, namespace string, dryRunStrategy cmdutil.DryRunStrategy, force, validate bool) (string, error) {
+func (k *KubectlCmd) ApplyResource(ctx context.Context, config *rest.Config, obj *unstructured.Unstructured, namespace string, dryRunStrategy cmdutil.DryRunStrategy, force, validate bool, opts ...CmdOpts) (string, error) {
 	span := k.Tracer.StartSpan("ApplyResource")
 	span.SetBaggageItem("kind", obj.GetKind())
 	span.SetBaggageItem("name", obj.GetName())
@@ -412,7 +436,7 @@ func (k *KubectlCmd) ApplyResource(ctx context.Context, config *rest.Config, obj
 		}
 		defer cleanup()
 
-		applyOpts, err := newApplyOptions(config, f, ioStreams, fileName, namespace, validate, force, dryRunStrategy)
+		applyOpts, err := newApplyOptions(config, f, ioStreams, fileName, namespace, validate, force, dryRunStrategy, opts)
 		if err != nil {
 			return err
 		}
@@ -420,7 +444,11 @@ func (k *KubectlCmd) ApplyResource(ctx context.Context, config *rest.Config, obj
 	})
 }
 
-func newApplyOptions(config *rest.Config, f cmdutil.Factory, ioStreams genericclioptions.IOStreams, fileName string, namespace string, validate bool, force bool, dryRunStrategy cmdutil.DryRunStrategy) (*apply.ApplyOptions, error) {
+func newApplyOptions(config *rest.Config, f cmdutil.Factory, ioStreams genericclioptions.IOStreams, fileName string, namespace string, validate bool, force bool, dryRunStrategy cmdutil.DryRunStrategy, opts []CmdOpts) (*apply.ApplyOptions, error) {
+	applyCtx := &CmdContext{}
+	for i := range opts {
+		opts[i](&applyCtx)
+	}
 	o := apply.NewApplyOptions(ioStreams)
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
@@ -431,7 +459,7 @@ func newApplyOptions(config *rest.Config, f cmdutil.Factory, ioStreams genericcl
 	if err != nil {
 		return nil, err
 	}
-	o.OpenAPISchema, err = f.OpenAPISchema()
+	o.OpenAPISchema, err = applyCtx.GetOpenAPISchema(f)
 	if err != nil {
 		return nil, err
 	}

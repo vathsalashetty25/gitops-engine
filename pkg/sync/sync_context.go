@@ -333,6 +333,7 @@ type syncContext struct {
 	applyOutOfSyncOnly bool
 	// stores whether the resource is modified or not
 	modificationResult map[kube.ResourceKey]bool
+	cmdContext         kube.CmdContext
 }
 
 func (sc *syncContext) setRunningPhase(tasks []*syncTask, isPendingDeletion bool) {
@@ -857,7 +858,7 @@ func (sc *syncContext) applyObject(t *syncTask, dryRun bool, force bool, validat
 			}
 		}
 	} else {
-		message, err = sc.kubectl.ApplyResource(context.TODO(), sc.rawConfig, t.targetObj, t.targetObj.GetNamespace(), dryRunStrategy, force, validate)
+		message, err = sc.kubectl.ApplyResource(context.TODO(), sc.rawConfig, t.targetObj, t.targetObj.GetNamespace(), dryRunStrategy, force, validate, kubeutil.WithCmdContext(&sc.cmdContext))
 	}
 	if err != nil {
 		return common.ResultCodeSyncFailed, err.Error()
