@@ -1,4 +1,4 @@
-module github.com/argoproj/gitops-engine
+module github.com/vathsalashetty25/gitops-engine
 
 go 1.15
 
