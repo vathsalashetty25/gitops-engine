@@ -1,6 +1,6 @@
-module github.com/vathsalashetty25/gitops-engine
+module github.com/argoproj/gitops-engine
 
-go 1.15
+go 1.14
 
 require (
 	github.com/davecgh/go-spew v1.1.1
