@@ -1,6 +1,6 @@
 module github.com/argoproj/gitops-engine
 
-go 1.14
+go 1.15
 
 require (
 	github.com/davecgh/go-spew v1.1.1
@@ -18,7 +18,7 @@ require (
 	k8s.io/klog/v2 v2.8.0
 	k8s.io/kube-aggregator v0.21.0
 	k8s.io/kubectl v0.21.0
-	k8s.io/kubernetes v1.21.1
+	k8s.io/kubernetes v1.21.0
 	sigs.k8s.io/yaml v1.2.0
 )
 
